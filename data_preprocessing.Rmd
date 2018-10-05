@@ -13,6 +13,7 @@ knitr::opts_chunk$set(echo = TRUE)
 library(dplyr)
 library(data.table)
 library(ggplot2)
+library(GGally)
 factormean <- function(x) {sum(x == 1)/length(x)}
 
 `%nin%` <- Negate(`%in%`)
@@ -69,6 +70,9 @@ train_data
 
 train_data[,.(count = .N), by=Flag]
 
+# this variable has a lot of missing values, for the time being we consider it as a separete variable and
+# we can later decide if we want to include it as a feature
+
 ```
 
 
@@ -90,7 +94,11 @@ continuous_vars <- c("Continuous", "Days_from_mfg")
 # obtain percent NULL values for every column
 print(sapply(train_data, percent_nulls))
 
+# Flag, Count_2 and Count_3 have ~67% missing/NULL values
+
 ```
+
+# Univariate Analysis
 
 ## Continuous and ordinal variable checks
 
@@ -107,7 +115,7 @@ print(train_data[, lapply(.SD, median, na.rm=TRUE), .SDcols=c(continuous_vars, o
 print("range")
 print(train_data[, lapply(.SD, range, na.rm=TRUE), .SDcols=c(continuous_vars, ordinal_vars, "Flag")])
 
-print("std dev")
+print("std_dev")
 print(train_data[, lapply(.SD, sd, na.rm=TRUE), .SDcols=c(continuous_vars, ordinal_vars, "Flag")])
 
 print("IQR")
@@ -143,11 +151,170 @@ hist(na.omit(train_data[,Count_3], freq = F))
 
 ```{r, distribution of nominal variables}
 
-qplot(data = train_data[,.(count=.N), by=c("Cat_A")], x=Cat_A, y=count)
-# train_data[,.(count=.N), by=c("Cat_B")]
+qplot(data = train_data[,.(count=.N), by=c("Cat_A")], x=Cat_A, y=count, geom = "density")
+qplot(data = train_data[,.(count=.N), by=c("Cat_B")], x=Cat_B, y=count, geom = "density")
+qplot(data = train_data[,.(count=.N), by=c("Cat_C")], x=Cat_C, y=count, geom = "density")
+qplot(data = train_data[,.(count=.N), by=c("Cat_D")], x=Cat_D, y=count, geom = "density")
+qplot(data = train_data[,.(count=.N), by=c("Cat_E")], x=Cat_E, y=count, geom = "density")
+qplot(data = train_data[,.(count=.N), by=c("Cat_F")], x=Cat_F, y=count, geom = "density")
+qplot(data = train_data[,.(count=.N), by=c("Cat_G")], x=Cat_G, y=count, geom = "density")
+qplot(data = train_data[,.(count=.N), by=c("Cat_H")], x=Cat_H, y=count, geom = "density")
+qplot(data = train_data[,.(count=.N), by=c("Cat_I")], x=Cat_I, y=count, geom = "density")
+qplot(data = train_data[,.(count=.N), by=c("Cat_J")], x=Cat_J, y=count, geom = "density")
+qplot(data = train_data[,.(count=.N), by=c("Cat_K")], x=Cat_K, y=count, geom = "density")
+qplot(data = train_data[,.(count=.N), by=c("Cat_L")], x=Cat_L, y=count, geom = "density")
+qplot(data = train_data[,.(count=.N), by=c("Cat_M")], x=Cat_M, y=count, geom = "density")
+qplot(data = train_data[,.(count=.N), by=c("Cat_N")], x=Cat_N, y=count, geom = "density")
+
+# Cat_G, Cat_H, Cat_I, Cat_J and Cat_L have multiple categories but very few categories with high count of observations
+# Cat_A, Cat_D, Cat_E, Cat_F have large number of categories and the count of observations under them are almost evenly spread
+
+```
+
+## Outlier analysis for continuous and ordinal variables
+
+```{r, continuous_vars and ordinal_vars outliers, collapse=TRUE}
+
+
+count_above_98th_percentile <- function(x){
+  length(which(x > quantile(x, c(0.98), na.rm = TRUE)))
+  
+}
+
+count_below_2th_percentile <- function(x){
+  length(which(x < quantile(x, c(0.02), na.rm = TRUE)))
+  
+}
+
+count_between_iqr <- function(x){
+  length(which((x > quantile(x, c(0.25), na.rm = TRUE)) & (x < quantile(x, c(0.75), na.rm = TRUE))))
+}
+
+print("count observations above 98th percentile")
+train_data[,lapply(.SD, count_above_98th_percentile), .SDcols = c(continuous_vars, ordinal_vars)]
+
+print("count observations below 5th percentile")
+train_data[,lapply(.SD, count_below_2th_percentile), .SDcols = c(continuous_vars, ordinal_vars)]
+
+print("count observations between 25th nd 75th percentile")
+train_data[,lapply(.SD, count_between_iqr), .SDcols = c(continuous_vars, ordinal_vars)]
+
+# because the data is exponentially distributed as we have seen above we observe that
+# there are a sizeable number of observations that lie outside the IQR, we cannot treat them as outliers
+```
+
+
+# Bivariate Analysis 
+
+## Target - catagorical vs. Continuous + ordinal
+```{r, bivariate - Continuous}
+
+continuous_var <- train_data[,.(positive_response_rate = factormean(Target), Count = length(ID)),.(Continuous)][order(Continuous)]
+
+qplot(data = continuous_var, x = Continuous, y = positive_response_rate, geom = "line") + geom_smooth(method = "lm")
+
+# with increase in Continuous positive response rate appears to go down
+
+```
 
 
 
+
+```{r, bivariate - Days_from_mfg}
+Days_from_mfg_var <- train_data[,.(positive_response_rate = factormean(Target), Count = length(ID)),.(Days_from_mfg)][order(Days_from_mfg)]
+
+qplot(data = Days_from_mfg_var, x = Days_from_mfg, y = positive_response_rate, geom = "line") + geom_smooth(method = "lm")
+
+# with increase in Days_from_mfg_var positive response rate appears to go up
+
+```
+
+
+```{r, Count_1}
+
+Count_1_var <- train_data[,.(positive_response_rate = factormean(Target), Count = length(ID)),.(Count_1)][order(Count_1)]
+
+qplot(data = Count_1_var, x = Count_1, y = positive_response_rate, geom = "line") + geom_smooth(method = "lm")
+
+# with increase in Count_1 positive response rate appears to  go down
+
+```
+
+
+
+
+```{r, Count 2}
+
+
+Count_2_var <- train_data[,.(positive_response_rate = factormean(Target), Count = length(ID)),.(Count_2)][order(Count_2)]
+
+qplot(data = Count_2_var, x = Count_2, y = positive_response_rate, geom = "line") + geom_smooth(method = "lm")
+
+# with increase in Count_2 positive response rate appears to  go up
+
+```
+
+
+
+```{r, Count 3}
+
+Count_3_var <- train_data[,.(positive_response_rate = factormean(Target), Count = length(ID)),.(Count_3)][order(Count_3)]
+
+qplot(data = Count_3_var, x = Count_3, y = positive_response_rate, geom = "line") + geom_smooth(method = "lm")
+
+# with increase in Count_2 positive response rate appears to gradually go up (this variable may not be of much importance while building a model)
+```
+
+## Target - catagorical vs. nominal
+
+
+```{r, Cat_A}
+
+Cat_A_var <- train_data[,.(positive_response_rate = factormean(Target), count = length(ID)), .(Cat_A)] [order(-positive_response_rate)]
+
+Cat_A_var
+
+qplot(data = Cat_A_var, x = positive_response_rate, main = "Histogram of positive response rate frequency")
+
+# majority of categories under Cat_A show a response rate < 0.5
+
+# we can also assign a low, medium / high bucket (create bins of categories which may help better our predictions)
+
+```
+
+```{r, Cat_B}
+
+Cat_B_var <- train_data[,.(positive_response_rate = factormean(Target), Count = length(ID)), .(Cat_B)] [order(-positive_response_rate)]
+
+Cat_B_var
+
+qplot(data = Cat_B_var, x = positive_response_rate, main = "Histogram of positive response rate frequency",ylab = "Count of Cat_B", xlab = "positive response rate")
+
+# All of categories under Cat_B show a response rate < 0.5, also this variable has a lot of blank values, it may not be considered while building the model
+
+```
+
+
+```{r, Cat_C}
+
+Cat_C_var <- train_data[,.(positive_response_rate = factormean(Target), Count = length(ID)), .(Cat_C)] [order(-positive_response_rate)]
+
+Cat_C_var
+
+qplot(data = Cat_C_var, x = positive_response_rate, main = "Histogram of positive response rate frequency",ylab = "Count of Cat_C", xlab = "positive response rate")
+
+# majority of categories under Cat_C show a response rate < 0.3
+
+```
+```{r, Cat_D}
+
+Cat_D_var <- train_data[,.(positive_response_rate = factormean(Target), Count = length(ID)), .(Cat_D)] [order(-positive_response_rate)]
+
+Cat_D_var
+
+qplot(data = Cat_D_var, x = positive_response_rate, main = "Histogram of positive response rate frequency",ylab = "Count of Cat_D", xlab = "positive response rate")
+
+# majority of categories under Cat_D show a response rate < 0.5
 
 ```
 
@@ -158,9 +325,198 @@ qplot(data = train_data[,.(count=.N), by=c("Cat_A")], x=Cat_A, y=count)
 
 
 
+```{r, Cat_E}
+
+Cat_E_var <- train_data[,.(positive_response_rate = factormean(Target), Count = length(ID)), .(Cat_E)] [order(-positive_response_rate)]
+
+Cat_E_var
+
+qplot(data = Cat_E_var, x = positive_response_rate, main = "Histogram of positive response rate frequency",ylab = "Count of Cat_E", xlab = "positive response rate")
+
+# majority of categories under Cat_E show a response rate < 0.5
+
+```
 
 
 
+
+
+
+```{r, Cat_F}
+
+Cat_F_var <- train_data[,.(positive_response_rate = factormean(Target), Count = length(ID)), .(Cat_F)] [order(-positive_response_rate)]
+
+Cat_F_var
+
+qplot(data = Cat_F_var, x = positive_response_rate, main = "Histogram of positive response rate frequency",ylab = "Count of Cat_F", xlab = "positive response rate")
+
+# majority of categories under Cat_F show a response rate < 0.5
+
+```
+
+
+
+```{r, Cat_G}
+
+Cat_G_var <- train_data[,.(positive_response_rate = factormean(Target), Count = length(ID)), .(Cat_G)] [order(-positive_response_rate)]
+
+Cat_D_var
+
+qplot(data = Cat_G_var, x = positive_response_rate, main = "Histogram of positive response rate frequency",ylab = "Count of Cat_G", xlab = "positive response rate")
+
+# majority of categories under Cat_G show a response rate of 0
+
+```
+
+
+
+```{r, Cat_H}
+
+Cat_H_var <- train_data[,.(positive_response_rate = factormean(Target), Count = length(ID)), .(Cat_H)] [order(-positive_response_rate)]
+
+Cat_H_var
+
+qplot(data = Cat_H_var, x = positive_response_rate, main = "Histogram of positive response rate frequency",ylab = "Count of Cat_H", xlab = "positive response rate")
+
+# categories seem evenly distributed in terms of positive response, this variable may not explain much variance in response
+
+```
+
+
+
+```{r, Cat_I}
+
+Cat_I_var <- train_data[,.(positive_response_rate = factormean(Target), Count = length(ID)), .(Cat_I)] [order(-positive_response_rate)]
+
+Cat_I_var
+
+qplot(data = Cat_I_var, x = positive_response_rate, main = "Histogram of positive response rate frequency",ylab = "Count of Cat_I", xlab = "positive response rate")
+
+# majority of categories under Cat_I show a response rate < 0.5
+
+```
+
+
+
+
+```{r, Cat_J}
+
+Cat_J_var <- train_data[,.(positive_response_rate = factormean(Target), Count = length(ID)), .(Cat_J)] [order(-positive_response_rate)]
+
+Cat_J_var
+
+qplot(data = Cat_J_var, x = positive_response_rate, main = "Histogram of positive response rate frequency",ylab = "Count of Cat_J", xlab = "positive response rate")
+
+# majority of categories under Cat_J show a response rate < 0.4
+
+```
+
+
+
+```{r, Cat_K}
+
+Cat_K_var <- train_data[,.(positive_response_rate = factormean(Target), Count = length(ID)), .(Cat_K)] [order(-positive_response_rate)]
+
+Cat_K_var
+
+qplot(data = Cat_K_var, x = positive_response_rate, main = "Histogram of positive response rate frequency",ylab = "Count of Cat_K", xlab = "positive response rate")
+
+# majority of categories under Cat_K show an even distribution
+
+```
+
+
+
+```{r, Cat_L}
+
+Cat_L_var <- train_data[,.(positive_response_rate = factormean(Target), Count = length(ID)), .(Cat_L)] [order(-positive_response_rate)]
+
+Cat_L_var
+
+qplot(data = Cat_L_var, x = positive_response_rate, main = "Histogram of positive response rate frequency",ylab = "Count of Cat_L", xlab = "positive response rate")
+
+# majority of categories under Cat_L show a response rate < 0.5
+
+```
+
+
+
+```{r, Cat_M}
+
+Cat_M_var <- train_data[,.(positive_response_rate = factormean(Target), Count = length(ID)), .(Cat_M)] [order(-positive_response_rate)]
+
+Cat_M_var
+
+qplot(data = Cat_M_var, x = positive_response_rate, main = "Histogram of positive response rate frequency",ylab = "Count of Cat_M", xlab = "positive response rate")
+
+# only 2 categories and not much variation, this might not be of much importance
+
+```
+
+
+
+```{r, Cat_N}
+
+Cat_N_var <- train_data[,.(positive_response_rate = factormean(Target), Count = length(ID)), .(Cat_N)] [order(-positive_response_rate)]
+
+Cat_N_var
+
+qplot(data = Cat_N_var, x = positive_response_rate, main = "Histogram of positive response rate frequency",ylab = "Count of Cat_N", xlab = "positive response rate")
+
+# majority of categories under Cat_N show a response rate > 0.4
+
+```
+
+
+```{r, Flag variable}
+
+
+Flag_var <- train_data[,.(positive_response_rate = factormean(Target), Count = length(ID)), .(Flag)] [order(-positive_response_rate)]
+
+Flag_var
+
+qplot(data = Flag_var, x = positive_response_rate, main = "Histogram of positive response rate frequency",ylab = "Count of Flag", xlab = "positive response rate")
+
+# we do not observe much variation wrt Target in this variable
+
+
+contingency_table <- dcast(train_data, Target ~ Flag, value.var = 'Flag', fun = length)
+chisq.test(contingency_table)
+
+# This shows that proportions of 1's and 0's wrt to Target is statistically significant
+```
+
+
+
+
+## Correlation Analysis
+```{r, correlation analysis}
+
+ggcorr(train_data[,.SD,.SDcols= c(continuous_vars, ordinal_vars)])
+# COunt_2 appears to be highly correlated with COunt_3, we will omit either 1 of these variables
+
+```
+
+## Missing value treatment
+```{r, missing value treatment}
+# obtain percent NULL values for every column
+print(sapply(train_data, percent_nulls))
+
+# Flag, Count_2 and Count_3 have ~67% missing/NULL values
+
+```
+
+
+```{r}
+
+(train_data[,lapply(.SD,),.SDcols=c("Cat_A")], is.na(x))
+
+
+sapply(train_data, function(X){ x==""})
+
+print(train_data[, lapply(.SD, function(X){length(x == "")}), .SDcols=c(continuous_vars, ordinal_vars, "Flag")])
+
+```
 
 
 
