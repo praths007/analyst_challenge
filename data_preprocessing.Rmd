@@ -41,7 +41,7 @@ str(train_data)
 
 ```
 
-```{r, collapse=TRUE, handling date column}
+```{r,  handling date column, collapse=TRUE}
 # checking relation betw date column and target column
 
 print(length(unique(train_data[,Date])))
@@ -88,25 +88,45 @@ continuous_vars <- c("Continuous", "Days_from_mfg")
 
 ```{r, check null values }
 # obtain percent NULL values for every column
-sapply(train_data, percent_nulls)
+print(sapply(train_data, percent_nulls))
 
 ```
 
-```{r, Univariate}
+```{r, Univariate analysis - continuous variables, collapse=TRUE}
 
 # temporary omition of missing data for running univariate
 
-  
-  
-sapply(train_data[,c(continuous_vars + ordinal_vars), with=FALSE], mean, na.rm=TRUE)
+print("mean")
+print(train_data[, lapply(.SD, mean, na.rm=TRUE), .SDcols=c(continuous_vars, ordinal_vars, "Flag")])
 
-# continuous variables
+print("median")
+print(train_data[, lapply(.SD, median, na.rm=TRUE), .SDcols=c(continuous_vars, ordinal_vars, "Flag")])
 
-train_data[,continuous_vars, with=FALSE]
+print("range")
+print(train_data[, lapply(.SD, range, na.rm=TRUE), .SDcols=c(continuous_vars, ordinal_vars, "Flag")])
 
-train_data[,continuous_vars + ordinal_vars, with=FALSE]
+print("std dev")
+print(train_data[, lapply(.SD, sd, na.rm=TRUE), .SDcols=c(continuous_vars, ordinal_vars, "Flag")])
 
-# hist(train_data[,Days_from_mfg], freq = F)
-# lines(density(train_data[,Days_from_mfg]),lwd=3,col="red")
+print("IQR")
+print(train_data[, lapply(.SD, IQR, na.rm=TRUE), .SDcols=c(continuous_vars, ordinal_vars, "Flag")])
+
 ```
 
+
+```{r, distribution plots - continuous variables}
+
+hist(na.omit(train_data[,Days_from_mfg]), freq = F)
+
+hist(na.omit(train_data[,Continuous], freq = F))
+
+hist(na.omit(train_data[,Count_1], freq = F))
+
+hist(na.omit(train_data[,Count_2], freq = F))
+
+hist(na.omit(train_data[,Count_3], freq = F))
+
+# none of the distributions are normal
+# majority of them are exponential
+
+```
