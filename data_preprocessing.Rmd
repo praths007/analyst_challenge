@@ -1,0 +1,112 @@
+---
+title: "ineight_data_preprocessing"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Initialization
+
+```{r Loading libraries and functions, echo=F, results= F}
+library(dplyr)
+library(data.table)
+library(ggplot2)
+factormean <- function(x) {sum(x == 1)/length(x)}
+
+`%nin%` <- Negate(`%in%`)
+
+removeNA <- function(DF, Cols) {
+  cleaned <- complete.cases(DF[, Cols])
+  return(DF[cleaned, ])}
+
+percent_nulls <- function(x){
+  (sum(is.na(x))/length(x) * 100)
+}
+
+```
+
+
+
+```{r}
+train_data <- read.csv("../Ineight-Analyst-Training-Data.csv")
+train_data <- data.table(train_data)
+train_data
+```
+
+```{r, datatypes of variables}
+
+str(train_data)
+
+```
+
+```{r, collapse=TRUE, handling date column}
+# checking relation betw date column and target column
+
+print(length(unique(train_data[,Date])))
+
+print(length(unique(train_data[,ID])))
+
+# there isnt a 1 to 1 mapping between ID's and Date, to utilize the date column
+# we can consider it to be manufacture date of a particular ID
+# we could derive a continuous column called Days_from_manufacture
+
+train_data[,Date:= as.Date(Date)]
+train_data[,Days_from_mfg:= as.numeric(Sys.Date() - Date)]
+train_data[,Date:= NULL]
+str(train_data)
+```
+```{r, checking NULL values}
+
+train_data
+
+```
+
+
+
+```{r, investigating flag column}
+
+train_data[,.(count = .N), by=Flag]
+
+```
+
+
+```{r, variable splits}
+
+# Factor variables/ char types considered as ordinal variables
+nominal_vars <- c("Cat_A", "Cat_B", "Cat_C", "Cat_D", "Cat_E", "Cat_F", "Cat_G", "Cat_H",
+                 "Cat_I", "Cat_J", "Cat_K", "Cat_L", "Cat_M", "Cat_N")
+
+# int type variables are considered nominal
+ordinal_vars <- c("Count_1", "Count_2", "Count_3")
+
+# specified as continuous in instructions doc
+continuous_vars <- c("Continuous", "Days_from_mfg")
+
+```
+
+```{r, check null values }
+# obtain percent NULL values for every column
+sapply(train_data, percent_nulls)
+
+```
+
+```{r, Univariate}
+
+# temporary omition of missing data for running univariate
+
+  
+  
+sapply(train_data[,c(continuous_vars + ordinal_vars), with=FALSE], mean, na.rm=TRUE)
+
+# continuous variables
+
+train_data[,continuous_vars, with=FALSE]
+
+train_data[,continuous_vars + ordinal_vars, with=FALSE]
+
+# hist(train_data[,Days_from_mfg], freq = F)
+# lines(density(train_data[,Days_from_mfg]),lwd=3,col="red")
+```
+
