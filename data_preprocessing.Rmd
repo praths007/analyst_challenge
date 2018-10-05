@@ -92,9 +92,11 @@ print(sapply(train_data, percent_nulls))
 
 ```
 
+## Continuous and ordinal variable checks
+
 ```{r, Univariate analysis - continuous variables, collapse=TRUE}
 
-# temporary omition of missing data for running univariate
+# temporary omition of missing data using na.rm for running univariate
 
 print("mean")
 print(train_data[, lapply(.SD, mean, na.rm=TRUE), .SDcols=c(continuous_vars, ordinal_vars, "Flag")])
@@ -128,5 +130,39 @@ hist(na.omit(train_data[,Count_3], freq = F))
 
 # none of the distributions are normal
 # majority of them are exponential
+# boxplot for these distributions will not show interpretable results
+# many values will be above the 75th percentile so we may have many outliers in the data
+
 
 ```
+
+
+
+## Nominal Variables
+
+
+```{r, distribution of nominal variables}
+
+qplot(data = train_data[,.(count=.N), by=c("Cat_A")], x=Cat_A, y=count)
+# train_data[,.(count=.N), by=c("Cat_B")]
+
+
+
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
