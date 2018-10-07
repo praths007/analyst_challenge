@@ -510,27 +510,47 @@ sapply(train_data, percent_nulls)
 ```
 
 
-```{r}
-train_data_wo_target = train_data[,.SD,.SDcols = (colnames(train_data) %nin% c("Target"))]
+```{r, Imputation of continuous + Ordinal variables}
 
-train_data_wo_target
-
-rm.ls = list()
-
-gc()
-
-library(micemd)
-tempData <- mice(train_data_wo_target, meth='rf')
-
-train_data
+train_data_wo_target <- train_data[,.SD,.SDcols = (colnames(train_data) %nin% c("Target", "ID"))]
 
 
+# gc()
+# rm(list = ls()[grep("Count", ls())]) 
+
+fittedmice <- mice(train_data_wo_target, meth='rf')
+
+# saveRDS(fittedmice, file = "mice_output.rds")
+
+imputed_train_data <- complete(fittedmice)
+
+continuous_imputed_train_data <- cbind(imputed_train_data, train_data[,.SD,.SDcols = c("Target", "ID")])
+
+sapply(continuous_imputed_train_data, percent_nulls)
+# Majority of continuous variables have been imputed
+# Now the remaining Nominal variables will be assigned "Others", wherever we have missing data
+
+continuous_imputed_train_data <- data.table(continuous_imputed_train_data)
+# temp changing factors to characters for substituting NAs with Others
+nominal_vars_to_subset <- nominal_vars %nin% columns_to_remove
 
 
+temp_impute <- continuous_imputed_train_data[, lapply(.SD, as.character), .SDcols=c(nominal_vars_to_subset)]
 
 
+replace_blanks_with_others <- function(x){
+  if((continuous_imputed_train_data=="") | (continuous_imputed_train_data=="NA") | (continuous_imputed_train_data=="na")){
+    return("Others")
+  }
+  
+}
 
-print(train_data[, lapply(.SD, function(X){length(x == "")}), .SDcols=c(continuous_vars, ordinal_vars, "Flag")])
+
+continuous_imputed_train_data[] <- "Others"
+
+sapply(continuous_imputed_train_data, percent_nulls)
+# train_data[,lapply(.SD, count_above_98th_percentile), .SDcols = c(continuous_vars, ordinal_vars)]
+
 
 ```
 
