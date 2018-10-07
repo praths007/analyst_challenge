@@ -10,6 +10,7 @@ knitr::opts_chunk$set(echo = TRUE)
 # Initialization
 
 ```{r Loading libraries and functions, echo=F, results= F}
+library(mice)
 library(dplyr)
 library(data.table)
 library(ggplot2)
@@ -17,14 +18,6 @@ library(GGally)
 factormean <- function(x) {sum(x == 1)/length(x)}
 
 `%nin%` <- Negate(`%in%`)
-
-removeNA <- function(DF, Cols) {
-  cleaned <- complete.cases(DF[, Cols])
-  return(DF[cleaned, ])}
-
-percent_nulls <- function(x){
-  (sum(is.na(x))/length(x) * 100)
-}
 
 ```
 
@@ -90,14 +83,6 @@ continuous_vars <- c("Continuous", "Days_from_mfg")
 
 ```
 
-```{r, check null values }
-# obtain percent NULL values for every column
-print(sapply(train_data, percent_nulls))
-
-# Flag, Count_2 and Count_3 have ~67% missing/NULL values
-
-```
-
 # Univariate Analysis
 
 ## Continuous and ordinal variable checks
@@ -151,20 +136,20 @@ hist(na.omit(train_data[,Count_3], freq = F))
 
 ```{r, distribution of nominal variables}
 
-qplot(data = train_data[,.(count=.N), by=c("Cat_A")], x=Cat_A, y=count, geom = "density")
-qplot(data = train_data[,.(count=.N), by=c("Cat_B")], x=Cat_B, y=count, geom = "density")
-qplot(data = train_data[,.(count=.N), by=c("Cat_C")], x=Cat_C, y=count, geom = "density")
-qplot(data = train_data[,.(count=.N), by=c("Cat_D")], x=Cat_D, y=count, geom = "density")
-qplot(data = train_data[,.(count=.N), by=c("Cat_E")], x=Cat_E, y=count, geom = "density")
-qplot(data = train_data[,.(count=.N), by=c("Cat_F")], x=Cat_F, y=count, geom = "density")
-qplot(data = train_data[,.(count=.N), by=c("Cat_G")], x=Cat_G, y=count, geom = "density")
-qplot(data = train_data[,.(count=.N), by=c("Cat_H")], x=Cat_H, y=count, geom = "density")
-qplot(data = train_data[,.(count=.N), by=c("Cat_I")], x=Cat_I, y=count, geom = "density")
-qplot(data = train_data[,.(count=.N), by=c("Cat_J")], x=Cat_J, y=count, geom = "density")
-qplot(data = train_data[,.(count=.N), by=c("Cat_K")], x=Cat_K, y=count, geom = "density")
-qplot(data = train_data[,.(count=.N), by=c("Cat_L")], x=Cat_L, y=count, geom = "density")
-qplot(data = train_data[,.(count=.N), by=c("Cat_M")], x=Cat_M, y=count, geom = "density")
-qplot(data = train_data[,.(count=.N), by=c("Cat_N")], x=Cat_N, y=count, geom = "density")
+qplot(data = train_data[,.(count=.N), by=c("Cat_A")], x=Cat_A, y=count)
+qplot(data = train_data[,.(count=.N), by=c("Cat_B")], x=Cat_B, y=count)
+qplot(data = train_data[,.(count=.N), by=c("Cat_C")], x=Cat_C, y=count)
+qplot(data = train_data[,.(count=.N), by=c("Cat_D")], x=Cat_D, y=count)
+qplot(data = train_data[,.(count=.N), by=c("Cat_E")], x=Cat_E, y=count)
+qplot(data = train_data[,.(count=.N), by=c("Cat_F")], x=Cat_F, y=count)
+qplot(data = train_data[,.(count=.N), by=c("Cat_G")], x=Cat_G, y=count)
+qplot(data = train_data[,.(count=.N), by=c("Cat_H")], x=Cat_H, y=count)
+qplot(data = train_data[,.(count=.N), by=c("Cat_I")], x=Cat_I, y=count)
+qplot(data = train_data[,.(count=.N), by=c("Cat_J")], x=Cat_J, y=count)
+qplot(data = train_data[,.(count=.N), by=c("Cat_K")], x=Cat_K, y=count)
+qplot(data = train_data[,.(count=.N), by=c("Cat_L")], x=Cat_L, y=count)
+qplot(data = train_data[,.(count=.N), by=c("Cat_M")], x=Cat_M, y=count)
+qplot(data = train_data[,.(count=.N), by=c("Cat_N")], x=Cat_N, y=count)
 
 # Cat_G, Cat_H, Cat_I, Cat_J and Cat_L have multiple categories but very few categories with high count of observations
 # Cat_A, Cat_D, Cat_E, Cat_F have large number of categories and the count of observations under them are almost evenly spread
@@ -495,24 +480,55 @@ chisq.test(contingency_table)
 ggcorr(train_data[,.SD,.SDcols= c(continuous_vars, ordinal_vars)])
 # COunt_2 appears to be highly correlated with COunt_3, we will omit either 1 of these variables
 
+columns_to_remove = c("Count_3")
 ```
 
 ## Missing value treatment
 ```{r, missing value treatment}
-# obtain percent NULL values for every column
-print(sapply(train_data, percent_nulls))
 
-# Flag, Count_2 and Count_3 have ~67% missing/NULL values
+# obtain percent NULL values for every column
+percent_nulls <- function(x){
+  (sum((is.na(x)) | (x=="") | (x=="NA") | (x=="na") | (sum(is.nan(x))) | sum(is.null(x)))/length(x) * 100)
+}
+
+sapply(train_data, percent_nulls)
+
+# Cat_B, Cat_G, Flag, Count_2, Count_3 have ~67% missing/NULL values
+# we will remove these columns as they have a lot of NA values, we cannot impute the high number of missing values with any technique
+# as it might skew our data and introduce noise which could get modelled giving the wrong Beta estimates for corresponding columns
+
+columns_to_remove = c(columns_to_remove, "Cat_B", "Cat_G", "Flag", "Count_2")
+
+columns_to_remove
+
+# removing the specific columns
+train_data[, c(columns_to_remove):=NULL]
+
+
+sapply(train_data, percent_nulls)
 
 ```
 
 
 ```{r}
+train_data_wo_target = train_data[,.SD,.SDcols = (colnames(train_data) %nin% c("Target"))]
 
-(train_data[,lapply(.SD,),.SDcols=c("Cat_A")], is.na(x))
+train_data_wo_target
+
+rm.ls = list()
+
+gc()
+
+library(micemd)
+tempData <- mice(train_data_wo_target, meth='rf')
+
+train_data
 
 
-sapply(train_data, function(X){ x==""})
+
+
+
+
 
 print(train_data[, lapply(.SD, function(X){length(x == "")}), .SDcols=c(continuous_vars, ordinal_vars, "Flag")])
 
