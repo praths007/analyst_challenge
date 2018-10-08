@@ -10,6 +10,7 @@ knitr::opts_chunk$set(echo = TRUE)
 # Initialization
 
 ```{r Loading libraries and functions, echo=F, results= F}
+rm(list=ls())
 library(mice)
 library(dplyr)
 library(data.table)
@@ -38,9 +39,9 @@ str(train_data)
 ```{r,  handling date column, collapse=TRUE}
 # checking relation betw date column and target column
 
-print(length(unique(train_data[,Date])))
+print(nrow(unique(train_data[,Date])))
 
-print(length(unique(train_data[,ID])))
+print(nrow(unique(train_data[,ID])))
 
 # there isnt a 1 to 1 mapping between ID's and Date, to utilize the date column
 # we can consider it to be manufacture date of a particular ID
@@ -154,38 +155,6 @@ qplot(data = train_data[,.(count=.N), by=c("Cat_N")], x=Cat_N, y=count)
 # Cat_G, Cat_H, Cat_I, Cat_J and Cat_L have multiple categories but very few categories with high count of observations
 # Cat_A, Cat_D, Cat_E, Cat_F have large number of categories and the count of observations under them are almost evenly spread
 
-```
-
-## Outlier analysis for continuous and ordinal variables
-
-```{r, continuous_vars and ordinal_vars outliers, collapse=TRUE}
-
-
-count_above_98th_percentile <- function(x){
-  length(which(x > quantile(x, c(0.98), na.rm = TRUE)))
-  
-}
-
-count_below_2th_percentile <- function(x){
-  length(which(x < quantile(x, c(0.02), na.rm = TRUE)))
-  
-}
-
-count_between_iqr <- function(x){
-  length(which((x > quantile(x, c(0.25), na.rm = TRUE)) & (x < quantile(x, c(0.75), na.rm = TRUE))))
-}
-
-print("count observations above 98th percentile")
-train_data[,lapply(.SD, count_above_98th_percentile), .SDcols = c(continuous_vars, ordinal_vars)]
-
-print("count observations below 5th percentile")
-train_data[,lapply(.SD, count_below_2th_percentile), .SDcols = c(continuous_vars, ordinal_vars)]
-
-print("count observations between 25th nd 75th percentile")
-train_data[,lapply(.SD, count_between_iqr), .SDcols = c(continuous_vars, ordinal_vars)]
-
-# because the data is exponentially distributed as we have seen above we observe that
-# there are a sizeable number of observations that lie outside the IQR, we cannot treat them as outliers
 ```
 
 
@@ -510,51 +479,141 @@ sapply(train_data, percent_nulls)
 ```
 
 
-```{r, Imputation of continuous + Ordinal variables}
+```{r, Imputation of continuous + ordinal variables}
 
 train_data_wo_target <- train_data[,.SD,.SDcols = (colnames(train_data) %nin% c("Target", "ID"))]
-
 
 # gc()
 # rm(list = ls()[grep("Count", ls())]) 
 
-fittedmice <- mice(train_data_wo_target, meth='rf')
-
+# fittedmice <- mice(train_data_wo_target, meth='rf')
 # saveRDS(fittedmice, file = "mice_output.rds")
+
+fittedmice <- readRDS("mice_output.rds")
 
 imputed_train_data <- complete(fittedmice)
 
-continuous_imputed_train_data <- cbind(imputed_train_data, train_data[,.SD,.SDcols = c("Target", "ID")])
+continuous_imputed_train_data <- data.table(cbind(imputed_train_data, train_data[,.SD,.SDcols = c("Target", "ID")]))
 
 sapply(continuous_imputed_train_data, percent_nulls)
 # Majority of continuous variables have been imputed
 # Now the remaining Nominal variables will be assigned "Others", wherever we have missing data
 
-continuous_imputed_train_data <- data.table(continuous_imputed_train_data)
+```
+
+```{r,  imputation of Nominal variables}
+
 # temp changing factors to characters for substituting NAs with Others
-nominal_vars_to_subset <- nominal_vars %nin% columns_to_remove
+nominal_vars_to_subset <- nominal_vars[which(nominal_vars %nin% columns_to_remove)]
 
+nominal_var_impute <- continuous_imputed_train_data[, lapply(.SD, as.character), .SDcols=c(nominal_vars_to_subset)]
+continuous_imputed_train_data[,(nominal_vars_to_subset) := NULL]
 
-temp_impute <- continuous_imputed_train_data[, lapply(.SD, as.character), .SDcols=c(nominal_vars_to_subset)]
+nominal_var_impute[(nominal_var_impute=="") | (nominal_var_impute=="NA") | (nominal_var_impute=="na")] <- "Others"
+nominal_var_impute <- nominal_var_impute[,lapply(.SD, as.factor)]
 
+# bind continuous and nominal vars together as a data table
+imputed_train_data <- data.table(cbind(continuous_imputed_train_data, nominal_var_impute))
 
-replace_blanks_with_others <- function(x){
-  if((continuous_imputed_train_data=="") | (continuous_imputed_train_data=="NA") | (continuous_imputed_train_data=="na")){
-    return("Others")
-  }
-  
-}
-
-
-continuous_imputed_train_data[] <- "Others"
-
-sapply(continuous_imputed_train_data, percent_nulls)
-# train_data[,lapply(.SD, count_above_98th_percentile), .SDcols = c(continuous_vars, ordinal_vars)]
+# checking if there are any other NULLS
+sapply(imputed_train_data, percent_nulls)
+# All missing valus have been imputed - 
+# Continuous and ordinal features are imputed using MICE
+# As other nominal features have very less percentage of missing values, we replace these missing values with "Other"
+str(imputed_train_data)
 
 
 ```
 
+## Outlier analysis for continuous and ordinal variables
+### Univariate analysis for Outlier detection and treatment
 
+```{r, continuous_vars and ordinal_vars outliers, collapse=TRUE}
+
+# obtaining values above and below 3*IQR
+subset_iqr <- function(x) {
+     ((x < ((quantile(x, c(0.25))) - (3 * (IQR(x))))) |
+                    
+  (x > ((quantile(x, c(0.75))) + (3 * (IQR(x))))))
+  
+}
+
+# obtianing percent values above and below 3*IQR
+percent_above_and_below_iqr <- function(x){
+(length(which(
+ 
+subset_iqr(x)
+
+  ))/length(x)) * 100            
+                
+}
+
+# assining NAs to subsetted values
+assign_na <- function(x){
+ifelse(subset_iqr(x) == TRUE, NA, x)
+}
+
+# continuous_vars
+print("percent observations above and below 3*IQR")
+imputed_train_data[,lapply(.SD, percent_above_and_below_iqr), .SDcols = c(continuous_vars, "Count_1")]
+
+
+# there are ~4% values which lie outside 3*IQR range for Continuous variable, for Days_from_mfg and Count_1
+# this value is zero, we can consider these as outliers and replace them with NA's, we will use MICE to impute
+# them again
+
+
+# assing NA values to outliers
+for (i in c("Continuous")){
+imputed_train_data[,(i):= lapply(.SD, assign_na), .SDcols = c(i)]
+}
+
+# NAs intrduced in data
+sapply(imputed_train_data, percent_nulls)
+
+imputed_train_data_wo_target <- imputed_train_data[,.SD,.SDcols = (colnames(imputed_train_data) %nin% c("Target", "ID"))]
+
+# gc()
+# 
+# fittedmice_outlier <- mice(imputed_train_data_wo_target, meth='rf')
+# saveRDS(fittedmice_outlier, file = "mice_outlier_output.rds")
+
+fittedmice_outlier <- readRDS("mice_outlier_output.rds")
+outlier_treated_train_data <- data.table(complete(fittedmice_outlier))
+
+outlier_treated_train_data <- data.table(cbind(outlier_treated_train_data, imputed_train_data[,.SD,.SDcols = c("Target", "ID")]))
+
+
+sapply(outlier_treated_train_data, percent_nulls)
+```
+
+
+
+
+### Multivariate analysis for Outlier detection and treatment
+
+```{r, multivariate outlier detection using mahalonobis distance}
+
+mdistance <- mahalanobis(outlier_treated_train_data[,.SD,.SDcols=c(continuous_vars, "Count_1")], 
+                      center = colMeans(outlier_treated_train_data[,.SD,.SDcols=c(continuous_vars, "Count_1")]),
+                      cov = cov(outlier_treated_train_data[,.SD,.SDcols=c(continuous_vars, "Count_1")]))
+
+outlier_treated_train_data[,mdistance := round(mdistance, 1)]
+
+outlier_treated_train_data[,moutlier := ifelse(mdistance > 20, 1, 0)]
+# around 88 rows are tagged as outliers, as these are very low in number we can remove them from the dataset
+
+multivariate_outlier_treated_train_data <- outlier_treated_train_data[moutlier == 0,]
+
+multivariate_outlier_treated_train_data[,':='(mdistance= NULL, moutlier=NULL)]
+
+sapply(multivariate_outlier_treated_train_data, percent_nulls)
+
+str(multivariate_outlier_treated_train_data)
+
+saveRDS(multivariate_outlier_treated_train_data, "pre_processed_train_data.RDS")
+
+```
 
 
 
