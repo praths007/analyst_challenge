@@ -232,5 +232,17 @@ auc <- performance(ROCRpred, measure = "auc")
 auc <- auc@y.values[[1]]
 
 auc
+
+
+# install.packages("InformationValue")
+library(InformationValue)
+optCutOff <- optimalCutoff(validation_data$Target, xgbpred)[1] 
+
+optCutOff
+
+xgbpred <- ifelse (xgbpred > optCutOff,1,0)
+
+library(caret)
+caret::confusionMatrix(validation_data$Target, xgbpred)
 ```
 
