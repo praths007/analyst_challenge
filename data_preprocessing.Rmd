@@ -598,10 +598,11 @@ mdistance <- mahalanobis(outlier_treated_train_data[,.SD,.SDcols=c(continuous_va
                       center = colMeans(outlier_treated_train_data[,.SD,.SDcols=c(continuous_vars, "Count_1")]),
                       cov = cov(outlier_treated_train_data[,.SD,.SDcols=c(continuous_vars, "Count_1")]))
 
-outlier_treated_train_data[,mdistance := round(mdistance, 1)]
+outlier_treated_train_data[,mdistance := mdistance]
 
-outlier_treated_train_data[,moutlier := ifelse(mdistance > 20, 1, 0)]
-# around 88 rows are tagged as outliers, as these are very low in number we can remove them from the dataset
+outlier_treated_train_data[,moutlier := ifelse(mdistance > 30, 1, 0)]
+nrow(outlier_treated_train_data[moutlier == 1,])
+# around 6 rows are tagged as outliers, as these are very low in number we can remove them from the dataset
 
 multivariate_outlier_treated_train_data <- outlier_treated_train_data[moutlier == 0,]
 
@@ -615,5 +616,8 @@ saveRDS(multivariate_outlier_treated_train_data, "pre_processed_train_data.RDS")
 
 ```
 
+```{r}
+
+```
 
 

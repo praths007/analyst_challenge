@@ -1,0 +1,185 @@
+---
+title: "model_building"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Initialization
+
+```{r Loading libraries and functions, echo=F, results= F}
+rm(list=ls())
+library(mice)
+library(dplyr)
+library(data.table)
+library(ggplot2)
+library(GGally)
+
+factormean <- function(x) {sum(x == 1)/length(x)}
+
+`%nin%` <- Negate(`%in%`)
+
+```
+
+
+
+```{r}
+train_data <- readRDS("pre_processed_train_data.RDS")
+train_data <- data.table(train_data)
+train_data
+
+test_data <- read.csv("../Ineight-Analyst-Testing-Data.csv")
+test_data <- data.table(test_data)
+test_data
+```
+
+
+## Treating test data similar to train data
+```{r, datatypes of variables}
+# creating Day_from_mfg variable from Date column
+test_data[,Date:= as.Date(Date)]
+test_data[,Days_from_mfg:= as.numeric(Sys.Date() - Date)]
+test_data[,Date:= NULL]
+
+# subsetting columns of test data so that they contain the same columns as train data
+cols_to_omit <- colnames(test_data)[which(colnames(test_data) %nin% colnames(train_data))]
+test_data[,(cols_to_omit) := NULL]
+
+colnames(test_data)
+```
+
+
+```{r, variable splits}
+
+# Factor variables/ char types considered as ordinal variables
+nominal_vars <- c("Cat_A", "Cat_C", "Cat_D", "Cat_E", "Cat_F", "Cat_H",
+                 "Cat_I", "Cat_J", "Cat_K", "Cat_L", "Cat_M", "Cat_N")
+
+# int type variables are considered nominal
+ordinal_vars <- c("Count_1")
+
+# specified as continuous in instructions doc
+continuous_vars <- c("Continuous", "Days_from_mfg")
+
+```
+
+
+### Missing value check and treatment
+```{r, missing value checks and treatment}
+# obtain percent NULL values for every column
+percent_nulls <- function(x){
+  (sum((is.na(x)) | (x=="") | (x=="NA") | (x=="na") | (sum(is.nan(x))) | sum(is.null(x)))/length(x) * 100)
+}
+
+sapply(test_data, percent_nulls)
+# continuous and ordinal variables do not have missing values
+# low percent of missing values is observed for Nominal variables
+
+
+# assigning "Others" to Nominal
+nominal_var_impute <- test_data[, lapply(.SD, as.character), .SDcols=c(nominal_vars)]
+test_data[,(nominal_vars) := NULL]
+
+nominal_var_impute[(nominal_var_impute=="") | (nominal_var_impute=="NA") | (nominal_var_impute=="na")] <- "Others"
+nominal_var_impute <- nominal_var_impute[, lapply(.SD, as.factor)]
+
+# bind continuous and nominal vars together as a data table
+imputed_test_data <- data.table(cbind(test_data, nominal_var_impute))
+
+sapply(imputed_test_data, percent_nulls)
+
+```
+
+### Outlier detection and treatment
+```{r, outlier treatment}
+
+# test_data <- copy(imputed_test_data)
+# univariate outlier detection and treatment
+# transforming test data based on train data range
+train_data[, lapply(.SD, range), .SDcols = c(continuous_vars, ordinal_vars)]
+
+imputed_test_data[(Continuous <= 0 | Continuous >= 40226437), Continuous:= NA]
+imputed_test_data[(Days_from_mfg <= 952 | Days_from_mfg >= 8270), Days_from_mfg:= NA]
+imputed_test_data[(Count_1 <= 1 | Count_1 >= 11), Continuous:= NA]
+
+sapply(imputed_test_data, percent_nulls)
+
+
+# we can observe that Days_from_mfg shows everything as outliers - this can be because of time periods not
+# overlapping when between train and test, we will omit the outlier treatment for this variable
+
+# wrt Continuous we have 33% observations being tagged as outliers, it is a sizeable number
+# As this is the test data and the objective of building our classification model is not clear
+# we will leave this variables untreated
+
+
+
+# multivariate outlier detection and treatment
+mdistance <- mahalanobis(test_data[,.SD,.SDcols=c(continuous_vars, ordinal_vars)], 
+                      center = colMeans(test_data[,.SD,.SDcols=c(continuous_vars, ordinal_vars)]),
+                      cov = cov(test_data[,.SD,.SDcols=c(continuous_vars, ordinal_vars)]))
+
+test_data[,mdistance := mdistance]
+
+test_data[,moutlier := ifelse(mdistance > 30, 1, 0)]
+nrow(test_data[moutlier == 1,])
+# around 10 observations are tagged as outliers
+# as we need predictions for all 837 observations it will not make sense to remove these rows, we will skip removing these
+
+```
+
+## Generating validation dataset
+```{r, splitting train to test and validation}
+# create stratified test and validation sample
+library(caret)
+
+train_data <- as.data.frame(train_data)
+
+set.seed(123)
+
+index <- createDataPartition(train_data$Target, p = .70, list = FALSE)
+
+train_data <- train_data[index, ]
+validation_data <- train_data[-index, ]
+
+
+nrow(train_data)
+nrow(validation_data)
+
+```
+
+
+
+# Model Fitting
+
+## XGBOOST
+### XGBOOST data prep
+```{r, running cross validation}
+library(rBayesianOptimization)
+library(xgboost)
+library(Matrix)
+
+train_features <- train_data[,c(continuous_vars, ordinal_vars, nominal_vars)]
+train_target <- train_data[,c("Target")]
+
+validation_features <- validation_data[,c(continuous_vars, ordinal_vars, nominal_vars)]
+validation_target <- validation_data[,c("Target")]
+
+
+# since XGB splits trees based on ordered list we will have to one hot encode the ordinal and nominal variables
+encoded_train_features <- sparse.model.matrix(~.+0,data = train_features[, !names(train_features) %in% "Target"])
+encoded_validation_features <- sparse.model.matrix(~.+0,data = validation_features[, !names(validation_features) %in% "Target"])
+
+```
+
+
+
+```{r}
+
+
+
+
+```
+
