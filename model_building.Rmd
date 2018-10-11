@@ -1,5 +1,5 @@
 ---
-title: "model_building"
+title: "Ineight Analyst Challenge - Model Building"
 output: html_document
 ---
 
@@ -9,24 +9,29 @@ knitr::opts_chunk$set(echo = TRUE)
 
 # Initialization
 
-```{r Loading libraries and functions, echo=F, results= F}
+```{r Loading libraries and functions, results= F, message=F, warning=F, tidy=T}
 rm(list=ls())
 library(mice)
-library(dplyr)
 library(data.table)
 library(ggplot2)
-library(GGally)
-
-factormean <- function(x) {sum(x == 1)/length(x)}
+library(caret)
+library(rBayesianOptimization)
+library(xgboost)
+library(Matrix)
+library(ROCR)
+library(InformationValue)
+library(caret)
+library(ROSE)
+library(pscl)
 
 `%nin%` <- Negate(`%in%`)
 
 ```
 
 
-
-```{r}
-train_data <- readRDS("pre_processed_train_data.RDS")
+## Read input data
+```{r, input data, message=F, warning=F, tidy=T}
+train_data <- readRDS("pre_processed_train_data.rds")
 train_data <- data.table(train_data)
 train_data
 
@@ -37,22 +42,21 @@ test_data
 
 
 ## Treating test data similar to train data
-```{r, datatypes of variables}
+```{r, datatypes of variables, message=F, warning=F, tidy=T}
 # creating Day_from_mfg variable from Date column
-test_data[,Date:= as.Date(Date)]
-test_data[,Days_from_mfg:= as.numeric(Sys.Date() - Date)]
-test_data[,Date:= NULL]
+test_data <- test_data[,Date:= as.Date(Date)]
+test_data <- test_data[,Days_from_mfg:= as.numeric(Sys.Date() - Date)]
+test_data <- test_data[,Date:= NULL]
 
 # subsetting columns of test data so that they contain the same columns as train data
 cols_to_omit <- colnames(test_data)[which(colnames(test_data) %nin% colnames(train_data))]
-test_data[,(cols_to_omit) := NULL]
+test_data <- test_data[,(cols_to_omit) := NULL]
 
 colnames(test_data)
 ```
 
-
-```{r, variable splits}
-
+### Split variables
+```{r, variable splits, message=F, warning=F, tidy=T}
 # Factor variables/ char types considered as ordinal variables
 nominal_vars <- c("Cat_A", "Cat_C", "Cat_D", "Cat_E", "Cat_F", "Cat_H",
                  "Cat_I", "Cat_J", "Cat_K", "Cat_L", "Cat_M", "Cat_N")
@@ -61,14 +65,13 @@ nominal_vars <- c("Cat_A", "Cat_C", "Cat_D", "Cat_E", "Cat_F", "Cat_H",
 ordinal_vars <- c("Count_1")
 
 # specified as continuous in instructions doc
-# we exclude Dyas_from_mfg as there is no overlap between train and test data
 continuous_vars <- c("Continuous", "Days_from_mfg")
 
 ```
 
 
 ### Missing value check and treatment
-```{r, missing value checks and treatment}
+```{r, missing value checks and treatment, message=F, warning=F, tidy=T}
 # obtain percent NULL values for every column
 percent_nulls <- function(x){
   (sum((is.na(x)) | (x=="") | (x=="NA") | (x=="na") | (sum(is.nan(x))) | sum(is.null(x)))/length(x) * 100)
@@ -79,40 +82,48 @@ sapply(test_data, percent_nulls)
 # low percent of missing values is observed for Nominal variables
 
 
-# assigning "Others" to Nominal
+# assigning "NA" to Nominal values with missing data
 nominal_var_impute <- test_data[, lapply(.SD, as.character), .SDcols=c(nominal_vars)]
-test_data[,(nominal_vars) := NULL]
+test_data <- test_data[,(nominal_vars) := NULL]
 
-nominal_var_impute[(nominal_var_impute=="") | (nominal_var_impute=="NA") | (nominal_var_impute=="na")] <- "Others"
+nominal_var_impute[(nominal_var_impute=="") | (nominal_var_impute=="na") | (is.na(nominal_var_impute))] <- NA
 nominal_var_impute <- nominal_var_impute[, lapply(.SD, as.factor)]
 
 # bind continuous and nominal vars together as a data table
-imputed_test_data <- data.table(cbind(test_data, nominal_var_impute))
+test_data_w_na <- data.table(cbind(test_data, nominal_var_impute))
+test_data_wo_id <- test_data_w_na[,.SD,.SDcols = (colnames(test_data_w_na) %nin% c("ID"))]
+
+# fitted_mice_test <- mice(test_data_wo_id, meth='rf')
+# saveRDS(fitted_mice_test, "mice_test_data.RDS")
+fitted_mice_test <- readRDS("mice_test_data.RDS")
+# imputation step
+imputed_test_data <- data.table(complete(fitted_mice_test))
 
 sapply(imputed_test_data, percent_nulls)
-
+# check if any other variable has missing data
 ```
 
 ### Outlier detection and treatment
-```{r, outlier treatment}
+```{r, outlier treatment, message=F, warning=F, tidy=T}
 
 test_data <- copy(imputed_test_data)
+
 # univariate outlier detection and treatment
 # transforming test data based on train data range
 train_data[, lapply(.SD, range), .SDcols = c(continuous_vars, ordinal_vars)]
 
-imputed_test_data[(Continuous <= 0 | Continuous >= 40226437), Continuous:= NA]
-imputed_test_data[(Days_from_mfg <= 952 | Days_from_mfg >= 8270), Days_from_mfg:= NA]
-imputed_test_data[(Count_1 <= 1 | Count_1 >= 11), Continuous:= NA]
+imputed_test_data <- imputed_test_data[(Continuous <= 0 | Continuous >= 40226437), Continuous:= NA]
+imputed_test_data <- imputed_test_data[(Days_from_mfg <= 952 | Days_from_mfg >= 8270), Days_from_mfg:= NA]
+imputed_test_data <- imputed_test_data[(Count_1 <= 1 | Count_1 >= 13), Continuous:= NA]
 
 sapply(imputed_test_data, percent_nulls)
 
-
-# we can observe that Days_from_mfg shows everything as outliers - this can be because of time periods not
+# we can observe that Days_from_mfg shows almost everything as outliers - this can be because of time periods not
 # overlapping when between train and test, we will omit the outlier treatment for this variable
-# we will skip using this variable in model fit
-imputed_test_data[,Days_from_mfg := NULL]
-test_data[,Days_from_mfg := NULL]
+# we will skip using this variable in model fit and remove it from train and test data
+imputed_test_data <- imputed_test_data[,Days_from_mfg := NULL]
+test_data <- test_data[,Days_from_mfg := NULL]
+train_data <- train_data[,Days_from_mfg := NULL]
 continuous_vars <- c("Continuous")
 
 # wrt Continuous we have 33% observations being tagged as outliers, it is a sizeable number
@@ -121,172 +132,385 @@ continuous_vars <- c("Continuous")
 # we will leave this variables untreated
 
 
-
 # multivariate outlier detection and treatment
 mdistance <- mahalanobis(test_data[,.SD,.SDcols=c(continuous_vars, ordinal_vars)], 
                       center = colMeans(test_data[,.SD,.SDcols=c(continuous_vars, ordinal_vars)]),
                       cov = cov(test_data[,.SD,.SDcols=c(continuous_vars, ordinal_vars)]))
 
-test_data[,mdistance := mdistance]
+test_data <- test_data[,mdistance := mdistance]
 
-test_data[,moutlier := ifelse(mdistance > 30, 1, 0)]
+test_data <- test_data[,moutlier := ifelse(mdistance > 30, 1, 0)]
 nrow(test_data[moutlier == 1,])
-# around 10 observations are tagged as outliers
+# 10 observations are tagged as outliers
 # as we need predictions for all 837 observations it will not make sense to remove these rows, we will skip removing these
 
+# removing moutlier and mdistance column
+test_data <- test_data[,":=" (moutlier = NULL, mdistance = NULL)]
+test_data <- as.data.frame(test_data)
+
 ```
 
-## Generating validation dataset
-```{r, splitting train to test and validation}
-# create stratified test and validation sample
-library(caret)
-
+## Generating test dataset from train
+```{r, splitting train to train and test, message=F, warning=F, tidy=T}
+# atm we dont have Target variable for our test data
+# so we wouldnt be able to check the performance of our classification models
+# to overcome this we create a stratified train and test sample from the train data itself, we call this 
+# validation data to avoid confusion with the original test dataset
 train_data <- as.data.frame(train_data)
 
-set.seed(123)
-
+set.seed(123) # reproducible results
 index <- createDataPartition(train_data$Target, p = .70, list = FALSE)
 
-train_data <- train_data[index, ]
-validation_data <- train_data[-index, ]
+train_data_sample <- train_data[index, ]
+validation_data_sample <- train_data[-index, ]
 
 
-nrow(train_data)
-nrow(validation_data)
-
-```
-
-## Obtaining weight for class 0 to overcome imbalance in data
-```{r,}
-
-table(train_data$Target)
-
-weight_0 = 3928/7249
-weight_0
+nrow(train_data_sample)
+nrow(validation_data_sample)
 
 ```
 
-# Model Fitting
+## Logistic Regression
+### Model fit
+```{r, logit model fit, message=F, warning=F, tidy=T}
+# this part is commented for knitting the rmd
+# logit_model <- glm(Target ~ .-ID, data = train_data_sample, family = binomial)
+# model failed to converge because of singularities
+
+# summary(logit_model)
+# we encounter singularities for Cat_D, Cat_E and Cat_N
+# For Cat_F we observe that the split between categories is not reflected uniformly in validation set
+# we will remove these columns and try fitting the model again
+cols_to_subset <- colnames(validation_data_sample)[colnames(validation_data_sample) %nin% c("ID", "Cat_D", "Cat_E", "Cat_F", "Cat_N")]
+
+train_data_sample_wo_singularity <- train_data_sample[,cols_to_subset] 
+
+logit_model_wo_singularities <- glm(Target ~ ., data = train_data_sample_wo_singularity, family = binomial)
+# summary(logit_model_wo_singularities)
+# model fit is a success
+
+```
+
+
+### Logistic model evaluation
+```{r, logit model evaluation, message=F, warning=F, tidy=T}
+pR2(logit_model_wo_singularities)
+# mcFaddens r^2 has a very low value (0.19) this means that the model performance is bad
+
+# remove columns that caused singularities while fitting, from the test set
+validation_data_sample_singularity <- validation_data_sample[,cols_to_subset]
+
+# get predictions
+logit_pred <- predict(logit_model_wo_singularities, validation_data_sample_singularity, type = 'response')
+
+# plot ROC curve
+ROCRpred <- prediction(logit_pred, validation_data_sample_singularity$Target)
+ROCRperf <- performance(ROCRpred, 'tpr','fpr')
+plot(ROCRperf)
+
+# Calculate AUROC
+auc <- performance(ROCRpred, measure = "auc")
+auc <- auc@y.values[[1]]
+auc
+
+# obtain optimal cutoff value, the default for this is to optimize for both 1s and 0s
+# as we do not know the business objective we keep this as default which is both 1s and 0s
+cutoff <- optimalCutoff(validation_data_sample$Target, logit_pred)[1] 
+cutoff
+
+# convert probabilty scores to classes
+logitpred <- ifelse(logit_pred > cutoff, 1, 0)
+caret::confusionMatrix(as.factor(validation_data_sample$Target), as.factor(logitpred))
+# Confusion matrix shows a poor performing classifier
+# we might be able to improve it if we use a non paramteric classification techniques
+```
+
 
 ## XGBOOST
 ### XGBOOST data prep
-```{r, running cross validation}
-library(rBayesianOptimization)
-library(xgboost)
-library(Matrix)
+```{r, running cross validation, message=F, warning=F, tidy=T}
+train_features <- train_data_sample[,c(continuous_vars, ordinal_vars, nominal_vars)]
+train_target <- train_data_sample[,c("Target")]
 
-train_features <- train_data[,c(continuous_vars, ordinal_vars, nominal_vars)]
-train_target <- train_data[,c("Target")]
-
-validation_features <- validation_data[,c(continuous_vars, ordinal_vars, nominal_vars)]
-validation_target <- validation_data[,c("Target")]
+validation_features <- validation_data_sample[,c(continuous_vars, ordinal_vars, nominal_vars)]
+validation_target <- validation_data_sample[,c("Target")]
 
 
-# since XGB splits trees based on ordered list we will have to one hot encode the ordinal and nominal variables
+# since XGB splits trees based on ordered list we will have to one hot encode the nominal variables
+# continuous and ordinal variables remain as is
 encoded_train_features <- sparse.model.matrix(~.+0,data = train_features[, !names(train_features) %in% "Target"])
 encoded_validation_features <- sparse.model.matrix(~.+0,data = validation_features[, !names(validation_features) %in% "Target"])
 
+# Since we have only 1 Continuous variable we will not use scaling on the dataset
 ```
 
 
-### cross validation and hyperparameter tuning
-```{r, cross validation and hyperparameter tuning}
+### Cross validation and hyperparameter tuning for XGBOOST
+```{r, cross validation and hyperparameter tuning, message=T, warning=F, tidy=T}
 
-dtrain <- xgb.DMatrix(encoded_train_features,
-                      label = train_target)
+# we require train data to be in the form of a matrix before running xgb
+dtrain <- xgb.DMatrix(encoded_train_features, label = train_target)
 
+# same for validation
+dtest <- xgb.DMatrix(data = encoded_validation_features,label = validation_target)
 
-dtest <- xgb.DMatrix(data = encoded_validation_features,label=validation_target)
+# specifying 5-fold cross validation(decreases variance/overfit)
+cv_folds <- KFold(train_target, nfolds = 5,stratified = TRUE, seed = 0)
 
-cv_folds <- KFold(train_target, nfolds = 5,
-                  stratified = TRUE, seed = 0)
-
-xgb_cv_bayes <- function(max_depth, min_child_weight, subsample, nrounds) {
-  cv <- xgb.cv(params = list(booster = "gbtree", eta = 0.01,
+# initialise cross validation 
+xgb_cv_bayes <- function(max_depth, min_child_weight, subsample, eta, colsample_bytree, nrounds, gamma) {
+  cv <- xgb.cv(params = list(booster = "gbtree", 
+                             eta = eta,
                              max_depth = max_depth,
-                             min_child_weight = min_child_weight,
-                             subsample = subsample, colsample_bytree = 0.3,
-                             lambda = 1, alpha = 0,
+                             min_child_weight = min_child_weight, 
+                             subsample = subsample, # number of rows given to tree
+                             colsample_bytree = colsample_bytree, # number of columns given to tree
+                             gamma = gamma, # to induce regularization and prevent overfit
                              objective = "binary:logistic",
-                             eval_metric = "auc", scale_pos_weight=weight_0),
-               data = dtrain, nrounds = nrounds,
-               folds = cv_folds, prediction = TRUE, showsd = TRUE,
-               early_stopping_rounds = 5, maximize = TRUE, verbose = 0)
+                             eval_metric = "auc"),
+               data = dtrain, 
+               nrounds = nrounds,
+               folds = cv_folds, 
+               prediction = TRUE, 
+               showsd = TRUE,
+               early_stopping_rounds = 100,
+               maximize = TRUE, 
+               verbose = 0)
   
   
   list(Score = cv$evaluation_log$test_auc_mean[cv$best_iteration],
        Pred = cv$pred)
 }
 
+# for gamma tuning, max_depth, and min_child_weight refer:
+# https://medium.com/data-design/xgboost-hi-im-gamma-what-can-i-do-for-you-and-the-tuning-of-regularization-a42ea17e6ab6
 
-OPT_Res <- BayesianOptimization(xgb_cv_bayes,bounds = list(max_depth = c(2L, 6L),
-                                              min_child_weight = c(1L, 10L),
-                                              subsample = c(0.5, 0.8),
-                                              nrounds = c(20, 30, 40, 50)),
-                                init_grid_dt = NULL, init_points = 10, n_iter = 30,
+# we will use bayesian optimization for tuning the paramters
+# it tries to build a proxy approximation for the objective function and iterate over a grid of paramters to find the minima
+OPT_Res <- BayesianOptimization(xgb_cv_bayes,bounds = list(max_depth = c(4L, 6L),
+                                              min_child_weight = c(0.1, 1L),
+                                              subsample = c(0.1, 0.6),
+                                              eta = c(0.001,0.4), # learning rate
+                                              colsample_bytree = c(0.6, 1L), # subset of columns
+                                              nrounds = c(100L, 300L), # number of estimators
+                                              gamma = c(3, 10)    # decrease overfit
+                                              ),
+                                init_grid_dt = NULL, init_points = 5, n_iter = 10,
                                 acq = "ucb", kappa = 2.576, eps = 0.0,
                                 verbose = TRUE)
 
 
-
-
+# split to params list to give as an input to 
 params_list <- lapply(split(OPT_Res$Best_Par, names(OPT_Res$Best_Par)), unname)
 
 params_list
 ```
 
 
-### Model fit and predict
-```{r,}
 
-xgb1 <- xgboost (params = params_list, data = dtrain, nrounds = 28,
-                   print_every_n = 10, early_stopping_rounds = 10, maximize = F , eval_metric = "error")
+### Model fit and predict for XGBOOST
+```{r, message=T, warning=F, tidy=T}
 
+# fit using params taken from cv
+xgb_fit <- xgb.train (params = params_list, 
+                 data = dtrain, 
+                 nrounds = params_list$nrounds,
+                 print_every_n = 10, 
+                 early_stopping_rounds = 100, 
+                 maximize = TRUE , 
+                 objective = "binary:logistic",
+                 watchlist = list(val=dtest,train=dtrain),
+                 eval_metric = "auc") # for classification
 
-xgbpred <- predict(xgb1, dtest)
+# get probabilty scores for validation set
+xgb_pred <- predict(xgb_fit, dtest)
 
 ```
 
-### Model Evaluation
+### Model Evaluation for XGBOOST
+```{r, message=F, warning=F, tidy=T}
+# plot ROC
+ROCRpred <- prediction(xgb_pred, validation_target)
+ROCRperf <- performance(ROCRpred, 'tpr','fpr')
+plot(ROCRperf)
 
-```{r, }
+# get AUROC
+auc <- performance(ROCRpred, measure = "auc")
+auc <- auc@y.values[[1]]
+auc
 
-library(ROCR)
-ROCRpred <- prediction(xgbpred, validation_data$Target)
+# obtain optimal cutoff
+cutoff <- optimalCutoff(validation_target, xgb_pred)[1] 
+cutoff
+
+# get confussion matric
+xgbpred <- ifelse (xgb_pred > cutoff, 1, 0)
+caret::confusionMatrix(as.factor(validation_target), as.factor(xgbpred))
+```
+
+
+
+## Dealing with imbalanced data
+```{r, message=F, warning=F, tidy=T}
+
+table(train_data$Target)
+# the dataset appears to be imbalanced, to balance out the classes we can either use over sampling or
+# undersampling or else penalise the class which has more observations by using scale_pos_weight (python specific xgboost)
+# (ratio of negative class to positive class)
+weight_0 = 5638/10329
+weight_0
+
+# oversampling can be done using SMOTE where we intrduce synthetic values for independent variables for the dependent class that is low in numbers
+
+```
+
+
+# Oversampling data
+## Using SMOTE
+```{r, message=F, warning=F, tidy=T}
+# induce oversampling
+train_smote <- ROSE(Target ~ ., data = train_data, seed = 1)$data
+
+# check class balance for Target
+table(train_smote$Target)
+
+# create stratified sample for train and validation
+set.seed(123) # reproducible results
+index <- createDataPartition(train_smote$Target, p = .70, list = FALSE)
+
+train_data_smote_sample <- train_smote[index, ]
+validation_data_smote_sample <- train_smote[-index,]
+
+```
+
+## data prep
+```{r, message=F, warning=F, tidy=T}
+train_features <- train_data_smote_sample[,c(continuous_vars, ordinal_vars, nominal_vars)]
+train_target <- train_data_smote_sample[,c("Target")]
+
+validation_features <- validation_data_smote_sample[,c(continuous_vars, ordinal_vars, nominal_vars)]
+validation_target <- validation_data_smote_sample[,c("Target")]
+
+
+# since XGB splits trees based on ordered list we will have to one hot encode the ordinal and nominal variables
+# continuous variables remain as is
+encoded_train_features <- sparse.model.matrix(~.+0,data = train_features[, !names(train_features) %in% "Target"])
+encoded_validation_features <- sparse.model.matrix(~.+0,data = validation_features[, !names(validation_features) %in% "Target"])
+```
+
+## Tuning hyperparameters
+```{r, message=T, warning=F, tidy=T}
+# we require train data to be in the form of a matrix before running xgb
+dtrain <- xgb.DMatrix(encoded_train_features, label = train_target)
+
+# same for test
+dtest <- xgb.DMatrix(data = encoded_validation_features,label = validation_target)
+
+# specifying 5-fold cross validation(decreases variance/overfit)
+cv_folds <- KFold(train_target, nfolds = 5,stratified = TRUE, seed = 0)
+
+# initialise cross validation
+xgb_cv_bayes <- function(max_depth, min_child_weight, subsample, eta, colsample_bytree, nrounds, gamma) {
+  cv <- xgb.cv(params = list(booster = "gbtree",
+                             eta = eta,
+                             max_depth = max_depth,
+                             min_child_weight = min_child_weight,
+                             subsample = subsample, # number of rows given to tree
+                             colsample_bytree = colsample_bytree, # number of columns given to tree
+                             gamma = gamma,
+                             objective = "binary:logistic",
+                             eval_metric = "auc"),
+               data = dtrain,
+               nrounds = nrounds,
+               folds = cv_folds,
+               prediction = TRUE,
+               showsd = TRUE,
+               early_stopping_rounds = 100,
+               maximize = TRUE,
+               verbose = 0)
+
+
+  list(Score = cv$evaluation_log$test_auc_mean[cv$best_iteration],
+       Pred = cv$pred)
+}
+
+
+OPT_Res_smote <- BayesianOptimization(xgb_cv_bayes, bounds = list(max_depth = c(4L, 6L),
+                                              min_child_weight = c(0.1, 1L),
+                                              subsample = c(0.1, 0.6), 
+                                              eta = c(0.001,0.4), # learning rate
+                                              colsample_bytree = c(0.6, 1L), # subset of columns
+                                              nrounds = c(100L, 300L), # number of estimators
+                                              gamma = c(3, 10)    # decrease overfit
+                                              ),
+                                init_grid_dt = NULL, init_points = 5, n_iter = 10,
+                                acq = "ucb", kappa = 2.576, eps = 0.0,
+                                verbose = TRUE)
+
+
+params_list <- lapply(split(OPT_Res_smote$Best_Par, names(OPT_Res_smote$Best_Par)), unname)
+
+params_list
+```
+
+
+## Model fit and predict for XGB with SMOTE
+```{r, message=T, warning=F, tidy=T}
+xgb_smote <- xgboost (params = params_list, 
+                 data = dtrain, 
+                 nrounds = params_list$nrounds, # from params_list
+                 print_every_n = 10, 
+                 early_stopping_rounds = 100, 
+                 maximize = TRUE , 
+                 objective = "binary:logistic", # for classification
+                 eval_metric = "auc") 
+
+
+xgbpred_smote <- predict(xgb_smote, dtest)
+
+```
+
+
+
+## Evaluation of smote model
+```{r, message=F, warning=F, tidy=T}
+
+ROCRpred <- prediction(xgbpred_smote, validation_target)
 ROCRperf <- performance(ROCRpred, 'tpr','fpr')
 plot(ROCRperf)
 
 auc <- performance(ROCRpred, measure = "auc")
 auc <- auc@y.values[[1]]
-
 auc
+# we observe a slight increase in AUC
+# we will use this as the final model
 
-library(InformationValue)
-optCutOff <- optimalCutoff(validation_data$Target, xgbpred)[1] 
+cutoff <- optimalCutoff(validation_target, xgbpred_smote)[1] 
+cutoff
 
-optCutOff
+xgbpred_smote <- ifelse(xgbpred_smote > cutoff, 1, 0)
 
-xgbpred <- ifelse (xgbpred > optCutOff, 1, 0)
-
-
-library(caret)
-caret::confusionMatrix(as.factor(as.numeric(validation_data$Target)), as.factor(xgbpred))
+caret::confusionMatrix(as.factor(as.numeric(validation_target)), as.factor(xgbpred_smote))
 ```
 
-# Predicting for test set
-```{r, }
-test_data <- data.frame(test_data)
 
+# Predicting for test set
+```{r, message=F, warning=F, tidy=T}
 # Modifying test data to make predictions
-test_mat <- model.matrix(~.+0,data = test_data[, !names(test_data) %in% "Cat_M"])
+# we remove Cat_M variable as there are new levels which have been introduced in the test set which
+# are not present train data
+test_mat <- sparse.model.matrix(~.+0,data = test_data[, !names(test_data) %in% c("Target", "Cat_M", "ID")])
+
 test_dmatrix <- xgb.DMatrix(data = test_mat)
 
+
 # Predicting for test data
-test_xgbpred <- predict(xgb1,test_dmatrix)
+test_xgb_smote_pred <- predict(xgb_smote, test_dmatrix)
 
-## FINAL SUBMISSION FILE
-# Saving predictions for Test data for submission
-test_ids <- read.csv("../Data/Ineight-Analyst-Testing-Data.csv")[,1]
-write.csv(cbind(test_ids, test_xgbpred), "../submission_xgb.csv", row.names = F)
+# writing probablity scores to csv
+test_dat_ID <- read.csv("../Ineight-Analyst-Testing-Data.csv")[,c("ID")]
+subission_df <- cbind(as.character(test_dat_ID), test_xgb_smote_pred)
+colnames(subission_df) <- c("ID", "Target")
 
+write.csv(subission_df, "ineight_analyst_challenge_predictions_prathmesh.csv", row.names = F)
 ```
